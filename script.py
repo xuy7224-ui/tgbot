@@ -20,7 +20,7 @@ from telegram.ext import (
 
 # ================== НАСТРОЙКИ ==================
 
-TOKEN = "BOT_TOKEN"          # <-- сюда токен бота
+TOKEN = "8449787376:AAHiF6t-pG5uSjiW7EayJBbH5ZliS1lSSNU"          # <-- сюда токен бота
 ADMIN_ID = 7877092881                  # ID админа
 DATA_FILE = "data.json"                # файл для хранения данных
 WELCOME_IMAGE_PATH = "welcome.jpg"     # имя файла с картинкой
@@ -363,3 +363,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
