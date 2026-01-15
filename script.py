@@ -4,7 +4,6 @@ import time
 from typing import Dict, Any
 import asyncio
 
-
 from telegram import (
     Update,
     InlineKeyboardMarkup,
@@ -20,18 +19,24 @@ from telegram.ext import (
 
 # ================== НАСТРОЙКИ ==================
 
-TOKEN = "8449787376:AAHiF6t-pG5uSjiW7EayJBbH5ZliS1lSSNU"          # <-- сюда токен бота
-ADMIN_ID = 7877092881                  # ID админа
-DATA_FILE = "data.json"                # файл для хранения данных
-WELCOME_IMAGE_PATH = "welcome.jpg"     # имя файла с картинкой
+TOKEN = "8449787376:AAHiF6t-pG5uSjiW7EayJBbH5ZliS1lSSNU"  # ⚠️ СЮДА ВСТАВЬ СВОЙ ТОКЕН
+ADMIN_ID = 7877092881          # ID админа
+DATA_FILE = "data.json"        # файл для хранения данных
+WELCOME_IMAGE_PATH = "welcome.jpg"  # имя файла с картинкой
 
 CLICK_COOLDOWN = 15  # секунд между кликами
 
+# Канал
+CHANNEL_LINK = "https://t.me/+g1mm-WpU9owwMWJk"
+
+# ⚠️ СЮДА ВПИШИ ИД КАНАЛА (например -1001234567890)
+CHANNEL_ID = -1003009758716
+
 # Цены бустеров (в кликах)
 BOOSTER_PRICES = {
-    "1.25": 20,   # 1.25x за 100 кликов
-    "1.5": 50,    # 1.5x за 250 кликов
-    "2": 100,      # 2x за 500 кликов
+    "1.25": 20,   # 1.25x за 20 кликов
+    "1.5": 50,    # 1.5x за 50 кликов
+    "2": 100,     # 2x за 100 кликов
 }
 
 # Структура данных:
@@ -56,7 +61,7 @@ def save_data():
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def get_user_dict(user_id: int, username: str) -> Dict[str, Any]:
+def get_user_dict(user_id: int, username: str | None) -> Dict[str, Any]:
     """Возвращает словарь пользователя, создаёт, если его нет."""
     uid = str(user_id)
     users = data.setdefault("users", {})
@@ -75,47 +80,108 @@ def get_user_dict(user_id: int, username: str) -> Dict[str, Any]:
             save_data()
     return users[uid]
 
+# ================== ПРОВЕРКА ПОДПИСКИ ==================
+
+async def is_subscribed(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Проверяет, подписан ли пользователь на канал.
+    Бот должен быть админом в канале.
+    """
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        # statuses: "creator", "administrator", "member", "restricted", "left", "kicked"
+        return member.status not in ("left", "kicked")
+    except Exception as e:
+        print(f"Error while checking subscription for {user_id}: {e}")
+        return False
+
 # ================== КЛАВИАТУРЫ ==================
 
 def main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👆Клик", callback_data="click")],
-        [InlineKeyboardButton("📊Статистика", callback_data="stats")],
-        [InlineKeyboardButton("🤑Магазин", callback_data="shop")],
+        [InlineKeyboardButton("👆 Кликнуть", callback_data="click")],
+        [InlineKeyboardButton("📊 Топ игроков", callback_data="stats")],
+        [InlineKeyboardButton("🤑 Магазин бустеров", callback_data="shop")],
     ])
+
 
 def shop_keyboard() -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(f"⬆️Бустер 1.25x — {BOOSTER_PRICES['1.25']} кликов", callback_data="buy_1.25")],
-        [InlineKeyboardButton(f"⬆️Бустер 1.5x — {BOOSTER_PRICES['1.5']} кликов", callback_data="buy_1.5")],
-        [InlineKeyboardButton(f"⬆️Бустер 2x — {BOOSTER_PRICES['2']} кликов", callback_data="buy_2")],
+        [InlineKeyboardButton(f"⚡ Бустер 1.25x — {BOOSTER_PRICES['1.25']} кликов", callback_data="buy_1.25")],
+        [InlineKeyboardButton(f"🚀 Бустер 1.5x — {BOOSTER_PRICES['1.5']} кликов", callback_data="buy_1.5")],
+        [InlineKeyboardButton(f"🔥 Бустер 2x — {BOOSTER_PRICES['2']} кликов", callback_data="buy_2")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_main")],
     ]
     return InlineKeyboardMarkup(buttons)
+
+
+def subscribe_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для экрана подписки."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Наш канал", url=CHANNEL_LINK)],
+        [InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")],
+    ])
+
+# ================== ОБЩЕЕ ПРИВЕТСТВИЕ ДЛЯ ПОДПИСАННЫХ ==================
+
+async def send_welcome_tunuzia(update_or_query, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Красивое приветствие TunuziaClicker для подписанных.
+    Можно вызывать как из /start, так и после успешной проверки подписки.
+    """
+    chat_id = (
+        update_or_query.effective_chat.id
+        if isinstance(update_or_query, Update)
+        else update_or_query.message.chat.id
+    )
+
+    caption = (
+        "<b><blockquote>👋 Добро пожаловать в TunuziaClicker!</blockquote>\n\n"
+        "<blockquote>💠 Пока что бесполезный кликер хз для чего\n"
+        "📢 Наш канал: <a href=\"https://t.me/+g1mm-WpU9owwMWJk\">tunuZia</a></blockquote>\n\n"
+        "👇 <b>Используй кнопки ниже для продолжения:</b></b>"
+    )
+
+    if os.path.exists(WELCOME_IMAGE_PATH):
+        with open(WELCOME_IMAGE_PATH, "rb") as img:
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=InputFile(img),
+                caption=caption,
+                reply_markup=main_keyboard(),
+                parse_mode="HTML"
+            )
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=caption,
+            reply_markup=main_keyboard(),
+            parse_mode="HTML"
+        )
 
 # ================== ОБРАБОТЧИКИ КОМАНД ==================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    get_user_dict(user.id, user.username)
 
-    # Отправляем картинку с кнопками
-    if os.path.exists(WELCOME_IMAGE_PATH):
-        with open(WELCOME_IMAGE_PATH, "rb") as img:
-            await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=InputFile(img),
-                caption="<b> - Привет, это кликер имени великой Tunuzia\n<a href=\"https://t.me/+g1mm-WpU9owwMWJk\">- Наш канал</a></b>",
-                reply_markup=main_keyboard(),
-                parse_mode="HTML"
-            )
-
-    else:
-        # Если картинка не найдена, просто текст
-        await update.message.reply_text(
-            "Добро пожаловать в бота (файл welcome.jpg не найден)",
-            reply_markup=main_keyboard(),
+    # Сначала проверяем подписку
+    if not await is_subscribed(user.id, context):
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=(
+                "🚫<blockquote> <b>Доступ к TunuziaClicker закрыт</b></blockquote>\n\n"
+                "Чтобы пользоваться ботом, подпишись на наш канал:\n"
+                f"<a href=\"{CHANNEL_LINK}\">📢 Наш канал</a>\n\n"
+                "После подписки нажми кнопку <b>«✅ Проверить подписку»</b> ниже 👇"
+            ),
+            reply_markup=subscribe_keyboard(),
+            parse_mode="HTML"
         )
+        return
+
+    # Если уже подписан – запускаем основную логику
+    get_user_dict(user.id, user.username)
+    await send_welcome_tunuzia(update, context)
 
 
 async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -127,7 +193,7 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         await update.message.reply_text(
-            "Использование:\n/broadcast <текст сообщения>",
+            "📢 Использование:\n<b>/broadcast</b> <текст сообщения>",
             parse_mode="HTML"
         )
         return
@@ -139,7 +205,7 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     failed = 0
 
     await update.message.reply_text(
-        f"📢 starting...\nusers regd: {len(users)}"
+        f"📨 Рассылка запущена...\n👥 Пользователей: {len(users)}"
     )
 
     for uid in users.keys():
@@ -155,9 +221,9 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             failed += 1
 
     await update.message.reply_text(
-        f"✅ done\n\n"
-        f"400: {success}\n"
-        f"503: {failed}"
+        f"✅ Готово!\n\n"
+        f"📬 Успешно (400): {success}\n"
+        f"⚠️ Ошибок (503): {failed}"
     )
 
 
@@ -166,27 +232,27 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id != ADMIN_ID:
         return
     text = (
-        "🛠 Админ-панель\n\n"
-        "Команды:\n"
-        "Использование:\n/broadcast <текст сообщения>.\n"
-        "/addclicks <user_id> <amount> — начислить пользователю клики.\n\n"
-        "Пример:\n"
-        "/addclicks 123456789 100\n"
-        "/broadcast < b > Внимание! < / b >Завтра будет обновление 🚀"
-
+        "🛠 <b>Админ-панель TunuziaClicker</b>\n\n"
+        "📌 Команды:\n"
+        "• <code>/broadcast &lt;текст&gt;</code> — отправить рассылку всем пользователям.\n"
+        "• <code>/addclicks &lt;user_id&gt; &lt;amount&gt;</code> — начислить пользователю клики.\n\n"
+        "Примеры:\n"
+        "• <code>/addclicks 123456789 100</code>\n"
+        "• <code>/broadcast &lt;b&gt;Внимание!&lt;/b&gt; Завтра будет обновление 🚀</code>"
     )
 
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, parse_mode="HTML")
 
-parse_mode="HTML"
+
 async def add_clicks_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_ID:
         return
-    parse_mode = "HTML"
+
     if len(context.args) != 2:
         await update.message.reply_text(
-            "Использование: /addclicks <user_id> <amount>"
+            "ℹ️ Использование: <code>/addclicks &lt;user_id&gt; &lt;amount&gt;</code>",
+            parse_mode="HTML"
         )
         return
 
@@ -194,7 +260,7 @@ async def add_clicks_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = int(context.args[0])
         amount = float(context.args[1])
     except ValueError:
-        await update.message.reply_text("user_id и amount должны быть числами.")
+        await update.message.reply_text("⚠️ user_id и amount должны быть числами.")
         return
 
     target = get_user_dict(target_id, None)
@@ -202,17 +268,51 @@ async def add_clicks_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_data()
 
     await update.message.reply_text(
-        f"Начислено {amount} кликов пользователю {target.get('username')} "
-        f"(ID: {target_id}). Теперь у него {target['clicks']:.2f} кликов."
+        f"💰 Начислено <b>{amount}</b> кликов пользователю "
+        f"<b>{target.get('username')}</b> (ID: <code>{target_id}</code>).\n"
+        f"Теперь у него <b>{target['clicks']:.2f}</b> кликов.",
+        parse_mode="HTML"
     )
 
 # ================== ОБРАБОТЧИК КНОПОК ==================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    # ❗ УБРАЛИ await query.answer() ОТСЮДА
-
     user = query.from_user
+
+    # --- Отдельно обрабатываем кнопку проверки подписки ---
+    if query.data == "check_sub":
+        if await is_subscribed(user.id, context):
+            get_user_dict(user.id, user.username)
+            await send_welcome_tunuzia(query, context)
+            await query.answer("✅ Подписка подтверждена!", show_alert=False)
+        else:
+            await query.answer(
+                "🚫 Вы ещё не подписаны на канал. Подпишитесь и попробуйте снова.",
+                show_alert=True
+            )
+        return
+
+    # Для всех остальных кнопок — доступ только при подписке
+    if not await is_subscribed(user.id, context):
+        await query.answer(
+            "🚫 Сначала подпишитесь на наш канал, затем нажмите «Проверить подписку».",
+            show_alert=True
+        )
+        await context.bot.send_message(
+            chat_id=query.message.chat.id,
+            text=(
+                "<blockquote>🔒 <b>Доступ к TunuziaClicker закрыт</b></blockquote>\n\n"
+                "Чтобы пользоваться ботом, подпишитесь на канал:\n"
+                f"<a href=\"{CHANNEL_LINK}\">📢 Наш канал</a>\n\n"
+                "После подписки нажмите «✅ Проверить подписку» 👇"
+            ),
+            reply_markup=subscribe_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    # --- Дальше идёт логика для подписанных пользователей ---
     user_data = get_user_dict(user.id, user.username)
     data_changed = False
 
@@ -224,7 +324,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if diff < CLICK_COOLDOWN:
             remain = int(CLICK_COOLDOWN - diff)
             await query.answer(
-                text=f"✔️следующий клик через {remain} сек.",
+                text=f"⏳ Следующий клик через {remain} сек.",
                 show_alert=True
             )
             return
@@ -236,19 +336,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_caption(
             caption=(
-                "<blockquote><b>Добро пожаловать в бота</b>\n\n"
-                "Ты кликнул! <b>+{:.2f}</b> кликов\n"
-                "Всего кликов: <code>{:.2f}</code>\n"
-                "Текущий бустер: <b>x{:.2f}</b></blockquote>"
-            ).format(
-                gained,
-                user_data["clicks"],
-                user_data["multiplier"]
+                "<blockquote>👆 <b>Клик засчитан!</b></blockquote>\n\n"
+                f"<blockquote>➕ Получено: <b>{gained:.2f} кликов\n"
+                f"💰 Всего кликов: <code>{user_data['clicks']:.2f}</code>\n"
+                f"⚙️ Текущий бустер: <b>x{user_data['multiplier']:.2f}</b></b></blockquote>"
             ),
             reply_markup=main_keyboard(),
             parse_mode="HTML"
         )
-
 
     elif query.data == "stats":
         users = data.get("users", {})
@@ -259,18 +354,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )[:10]
 
         if not sorted_users:
-            text = "Статистика пуста."
+            text = "📊 <b>Топ игроков</b>\n\nПока никто не кликал. Будь первым! 💥"
         else:
             lines = []
             for i, (uid, uinfo) in enumerate(sorted_users, start=1):
                 lines.append(
-                    f"{i}. {uinfo.get('username', 'Без ника')} "
-                    f"(ID: {uid}) — {uinfo.get('clicks', 0.0):.2f} кликов"
+                    f"{i}. <b>{uinfo.get('username', 'Без ника')}</b> "
+                    f"(ID: <code>{uid}</code>) — <b>{uinfo.get('clicks', 0.0):.2f}</b> кликов"
                 )
-            text = "📊 Статистика игроков:\n\n" + "\n".join(lines)
-
-        text = "<blockquote><b>📊 Статистика игроков</b></blockquote>\n\n"
-        text += "<b>\n==\n</b>".join(lines)
+            text = "<blockquote>📊 <b>Топ игроков TunuziaClicker</b></blockquote>\n\n" + "\n".join(lines)
 
         await query.edit_message_caption(
             caption=text,
@@ -278,27 +370,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
 
-
     elif query.data == "shop":
         await query.edit_message_caption(
             caption=(
-                "<blockquote>🛒 <b>Магазин бустеров</b>\n\n"
-                "Твои клики: <code>{:.2f}</code>\n"
-                "Текущий бустер: <b>x{:.2f}</b>\n\n"
-                "<i>Выбери бустер:</i></blockquote>"
-            ).format(
-                user_data["clicks"],
-                user_data["multiplier"]
+                "<b><blockquote>🛒 Магазин бустеров</blockquote>\n\n"
+                f"<blockquote>💰 Твои клики: <code>{user_data['clicks']:.2f}</code>\n"
+                f"⚙️ Текущий бустер: x{user_data['multiplier']:.2f}</blockquote>\n\n"
+                "Выбери бустер ниже, чтобы фармить ещё быстрее:</b>"
             ),
             reply_markup=shop_keyboard(),
             parse_mode="HTML"
         )
 
-
     elif query.data == "back_main":
         await query.edit_message_caption(
-            caption="dev by @codespaster",
+            caption="<b><blockquote>👋 Мейн меню TunuziaClicker!</blockquote>\n\n"
+       f"<blockquote>🤗 Привет, <code>{user_data['username']}</code>\n"
+       "📢 Наш канал: <a href=\"https://t.me/+g1mm-WpU9owwMWJk\">tunuZia</a></blockquote>\n\n"
+        "👇 <b>Используй кнопки ниже для продолжения:</b></b>",
             reply_markup=main_keyboard(),
+            parse_mode="HTML",
         )
 
     elif query.data.startswith("buy_"):
@@ -306,19 +397,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price = BOOSTER_PRICES.get(booster_str)
 
         if price is None:
-            await query.answer("Неизвестный бустер.", show_alert=True)
+            await query.answer("⚠️ Неизвестный бустер.", show_alert=True)
             return
 
         if user_data["multiplier"] >= float(booster_str):
             await query.answer(
-                "У тебя уже есть такой или более сильный бустер.",
+                "🤔 У тебя уже есть такой или более сильный бустер.",
                 show_alert=True
             )
             return
 
         if user_data["clicks"] < price:
             await query.answer(
-                f"Недостаточно кликов. Нужно {price}, у тебя {user_data['clicks']:.2f}.",
+                f"❌ Недостаточно кликов.\n"
+                f"Нужно: {price}, а у тебя: {user_data['clicks']:.2f}.",
                 show_alert=True
             )
             return
@@ -334,16 +426,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_caption(
             caption=(
-                f"✅Покупка успешна!\n"
-                f"📊Новый бустер: x{user_data['multiplier']:.2f}\n"
-                f"💵Оставшиеся клики: {user_data['clicks']:.2f}"
+                "✅ <b>Покупка успешна!</b>\n\n"
+                f"⚙️ Новый бустер: <b>x{user_data['multiplier']:.2f}</b>\n"
+                f"💰 Оставшиеся клики: <code>{user_data['clicks']:.2f}</code>\n\n"
+                "Продолжай кликать и поднимайся в топ! 📈"
             ),
             reply_markup=main_keyboard(),
+            parse_mode="HTML"
         )
 
     if data_changed:
         save_data()
-
 
 # ================== ЗАПУСК ПРИЛОЖЕНИЯ ==================
 
@@ -355,12 +448,14 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_help))
     app.add_handler(CommandHandler("addclicks", add_clicks_cmd))
-    app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(CommandHandler("broadcast", broadcast_cmd))
+
+    # Один обработчик для всех callback-кнопок
+    app.add_handler(CallbackQueryHandler(button_handler))
 
     print("Бот запущен...")
     app.run_polling()
 
+
 if __name__ == "__main__":
     main()
-
