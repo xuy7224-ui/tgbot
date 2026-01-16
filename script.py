@@ -3,6 +3,7 @@ import os
 import time
 from typing import Dict, Any
 import asyncio
+from datetime import datetime  # <--- добавили для форматирования дат
 
 from telegram import (
     Update,
@@ -19,7 +20,7 @@ from telegram.ext import (
 
 # ================== НАСТРОЙКИ ==================
 
-TOKEN = "8449787376:AAHiF6t-pG5uSjiW7EayJBbH5ZliS1lSSNU"  # ⚠️ лучше потом смени токен
+TOKEN = "8449787376:AAHiF6t-pG5uSjiW7EayJBbH5ZliS1lSSNU"  # ⚠️ сильно советую потом сменить токен
 ADMIN_ID = 7877092881          # ID админа
 DATA_FILE = "data.json"        # файл для хранения данных
 WELCOME_IMAGE_PATH = "welcome.jpg"  # имя файла с картинкой
@@ -27,7 +28,7 @@ WELCOME_IMAGE_PATH = "welcome.jpg"  # имя файла с картинкой
 CLICK_COOLDOWN = 15  # секунд между кликами
 
 # Канал
-CHANNEL_LINK = "https://t.me/+JGoGiSoFFbhkMWE0"
+CHANNEL_LINK = "https://t.me/+g1mm-WpU9owwMWJk"
 
 # ID канала (и для подписки, и для выдачи админки)
 CHANNEL_ID = -1003009758716
@@ -42,6 +43,9 @@ BOOSTER_PRICES = {
 # Цены админок
 ADMIN_L1_PRICE = 250  # админка 1 ур. — писать в канал
 ADMIN_L2_PRICE = 250  # админка 2 ур. — ещё и менять профиль канала
+
+# Срок действия админки (7 дней)
+WEEK_SECONDS = 7 * 24 * 60 * 60
 
 # Структура данных:
 data: Dict[str, Any] = {"users": {}}
@@ -75,8 +79,9 @@ def get_user_dict(user_id: int, username: str | None) -> Dict[str, Any]:
             "clicks": 0.0,
             "multiplier": 1.0,
             "last_click": 0.0,
-            "admin_level": 0,     # 0 — нет админки, 1 — ур.1, 2 — ур.2
-            "accepted_tos": False # принял ли ToS
+            "admin_level": 0,        # 0 — нет админки, 1 — ур.1, 2 — ур.2
+            "admin_expires_at": 0.0, # unix-время окончания админки
+            "accepted_tos": False,   # принял ли ToS
         }
         save_data()
     else:
@@ -87,6 +92,9 @@ def get_user_dict(user_id: int, username: str | None) -> Dict[str, Any]:
         # Дозакинем новые поля, если старый юзер
         if "admin_level" not in users[uid]:
             users[uid]["admin_level"] = 0
+            save_data()
+        if "admin_expires_at" not in users[uid]:
+            users[uid]["admin_expires_at"] = 0.0
             save_data()
         if "accepted_tos" not in users[uid]:
             users[uid]["accepted_tos"] = False
@@ -130,21 +138,21 @@ def shop_keyboard(user_data: Dict[str, Any]) -> InlineKeyboardMarkup:
     if admin_level < 1:
         buttons.append([
             InlineKeyboardButton(
-                f"👑 Админка 1 ур. — {ADMIN_L1_PRICE} кликов",
+                f"👑 Админка 1 ур. (7 дней) — {ADMIN_L1_PRICE} кликов",
                 callback_data="buy_admin_1"
             )
         ])
     elif admin_level == 1:
         buttons.append([
             InlineKeyboardButton(
-                f"👑 Админка 2 ур. — {ADMIN_L2_PRICE} кликов",
+                f"👑 Админка 2 ур. (7 дней) — {ADMIN_L2_PRICE} кликов",
                 callback_data="buy_admin_2"
             )
         ])
     else:
         buttons.append([
             InlineKeyboardButton(
-                "✅ Админка 2 ур. уже есть",
+                "✅ Админка 2 ур. уже есть у тя",
                 callback_data="admin_max"
             )
         ])
@@ -210,11 +218,12 @@ async def send_tos_message(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "<blockquote><b>📜 Условия использования TunuziaClicker</b></blockquote>\n\n"
         "<blockquote>"
-        "• Бот создан для развлечения, всё внутри нереально.\n"
-        "• Владелец имеет право забрать у вас админку без объяснений причин.\n"
-        "• Вас могут заблокировать в боте без объяснения причин.\n"
-        "• Разработчик не несет ответсвтвенность за ваши действия.\n"
-        "</blockquote>\n\n"
+        "<b>• Бот создан для развлечения, всё внутри — виртуально.</b>\n"
+        "<b>• Права администрации в канале выдаются на 7 дней + день покупки.</b>\n"
+        "<b>• Админка, купленная в боте, может быть отозвана без объяснения причины.</b>\n"
+        "<b>• Администратор может заблокировать вас в боте или канале без объяснения причины.</b>\n"
+        "<b>• По доп вопросам - /help и /me | разработчик - @codespaster.</b>\n"
+        "</blockquote>\n"
         "<b>Нажимая кнопку «✅ Принять правила», ты подтверждаешь согласие с вышеуказанным.</b>"
     )
 
@@ -224,6 +233,127 @@ async def send_tos_message(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=tos_keyboard(),
         parse_mode="HTML"
     )
+
+# ================== ПРОГРЕСС-БАР ==================
+
+def make_progress_bar(current: float, target: float, length: int = 10) -> tuple[str, int, float]:
+    """
+    Возвращает (bar, percent, remaining).
+    bar — строка из █ и ░
+    percent — целое число процентов
+    remaining — сколько ещё не хватает (не меньше 0)
+    """
+    if target <= 0:
+        return "██████████", 100, 0.0
+
+    remaining = max(0.0, target - current)
+    ratio = min(max(current / target, 0.0), 1.0)
+    filled = int(ratio * length)
+    bar = "█" * filled + "░" * (length - filled)
+    percent = int(ratio * 100)
+    return bar, percent, remaining
+
+# ================== JOB: СНЯТИЕ АДМИНКИ ==================
+
+async def remove_admin_job(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    user_id = job.data["user_id"]
+    user_data = get_user_dict(user_id, None)
+
+    level = user_data.get("admin_level", 0)
+    expires_at = float(user_data.get("admin_expires_at", 0.0))
+
+    # если уже нет админки или срок ещё не пришёл — ничего не делаем
+    now = time.time()
+    if level == 0 or expires_at == 0 or now < expires_at:
+        return
+
+    try:
+        # снимаем все админ-права
+        await context.bot.promote_chat_member(
+            chat_id=CHANNEL_ID,
+            user_id=user_id,
+            can_manage_chat=False,
+            can_post_messages=False,
+            can_edit_messages=False,
+            can_delete_messages=False,
+            can_invite_users=False,
+            can_change_info=False,
+            can_promote_members=False,
+            can_manage_video_chats=False,
+            is_anonymous=False,
+        )
+    except Exception as e:
+        print(f"Error while demoting user {user_id}: {e}")
+
+    user_data["admin_level"] = 0
+    user_data["admin_expires_at"] = 0.0
+    save_data()
+
+    # Уведомление пользователю
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "⌛️ <b>Срок действия твоей админки истёк</b>\n\n"
+                "все права были отозваны.\n"
+                "вы можете купить админку заново в магазине бота за ту же цену 🛒"
+            ),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"Error notifying user {user_id} about admin removal: {e}")
+
+    # Лог в ЛС админу
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                "⌛️ <b>Срок админки истёк и права были отозваны.</b>\n\n"
+                f"🆔 Ur ID: <code>{user_id}</code>\n"
+                f"👑 Бывший уровень прав: {level}"
+            ),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"Error logging admin removal to admin: {e}")
+
+def schedule_admin_expiry_job_for_user(app, user_id: int, expires_at: float):
+    """Создаёт/пересоздаёт джобу снятия админки для пользователя."""
+    job_queue = app.job_queue
+    job_name = f"admin_expire_{user_id}"
+    # убираем старые джобы с тем же именем
+    for job in job_queue.get_jobs_by_name(job_name):
+        job.schedule_removal()
+
+    now = time.time()
+    delay = max(0, expires_at - now)
+    job_queue.run_once(
+        remove_admin_job,
+        when=delay,
+        data={"user_id": user_id},
+        name=job_name,
+    )
+
+def schedule_admin_expiry_jobs_for_all_users(app):
+    """Вызывается при старте бота — досоздаёт джобы для тех, у кого есть активная админка."""
+    now = time.time()
+    users = data.get("users", {})
+    for uid, uinfo in users.items():
+        level = uinfo.get("admin_level", 0)
+        expires_at = float(uinfo.get("admin_expires_at", 0.0))
+        if level > 0 and expires_at > 0:
+            delay = max(0, expires_at - now)
+            job_name = f"admin_expire_{uid}"
+            # удалим старые, если были
+            for job in app.job_queue.get_jobs_by_name(job_name):
+                job.schedule_removal()
+            app.job_queue.run_once(
+                remove_admin_job,
+                when=delay,
+                data={"user_id": int(uid)},
+                name=job_name,
+            )
 
 # ================== ОБРАБОТЧИКИ КОМАНД ==================
 
@@ -235,7 +365,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=(
-                " <blockquote><b>Доступ к TunuziaClicker закрыт</b></blockquote>\n\n"
+                "🚫<blockquote> <b>Доступ к TunuziaClicker закрыт</b></blockquote>\n\n"
                 "Чтобы пользоваться ботом, подпишись на наш канал:\n"
                 f"<a href=\"{CHANNEL_LINK}\">📢 Наш канал</a>\n\n"
                 "После подписки нажми кнопку <b>«✅ Проверить подписку»</b> ниже 👇"
@@ -308,7 +438,9 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠 <b>Админ-панель TunuziaClicker</b>\n\n"
         "📌 Команды:\n"
         "• <code>/broadcast &lt;текст&gt;</code> — отправить рассылку всем пользователям.\n"
-        "• <code>/addclicks &lt;user_id&gt; &lt;amount&gt;</code> — начислить пользователю клики.\n\n"
+        "• <code>/addclicks &lt;user_id&gt; &lt;amount&gt;</code> — начислить пользователю клики.\n"
+        "• <code>/users_admins</code> — список всех с админкой.\n"
+        "• <code>/me</code> — профиль игрока (для всех).\n\n"
         "Примеры:\n"
         "• <code>/addclicks 123456789 100</code>\n"
         "• <code>/broadcast &lt;b&gt;Внимание!&lt;/b&gt; Завтра будет обновление 🚀</code>"
@@ -346,6 +478,172 @@ async def add_clicks_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Теперь у него <b>{target['clicks']:.2f}</b> кликов.",
         parse_mode="HTML"
     )
+
+
+
+
+# ================== /me ==================
+
+async def me_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_data = get_user_dict(user.id, user.username)
+
+    # Проверка подписки
+    if not await is_subscribed(user.id, context):
+        await update.message.reply_text(
+            "🚫 Сначала подпишись на канал и нажми «Проверить подписку».",
+            parse_mode="HTML"
+        )
+        return
+
+    # Проверка ToS
+    if not user_data.get("accepted_tos", False):
+        await update.message.reply_text(
+            "📜 Ты ещё не принял правила использования.\n"
+            "Нажми кнопку ниже:",
+            reply_markup=tos_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    admin_level = user_data.get("admin_level", 0)
+    clicks = float(user_data.get("clicks", 0.0))
+
+    # Название уровня админки
+    admin_text = {
+        0: "❌ Нет прав у тя лол",
+        1: "👑 Админ 1 ур.",
+        2: "👑 Админ 2 ур.",
+    }.get(admin_level, "❓ Неизвестно")
+
+    # Прогресс до следующей админки (по кликам)
+    if admin_level == 0:
+        target = ADMIN_L1_PRICE
+        label_next = "до админки 1 ур."
+    elif admin_level == 1:
+        target = ADMIN_L2_PRICE
+        label_next = "до админки 2 ур."
+    else:
+        target = None
+        label_next = None
+
+    if target is not None:
+        bar, percent, remaining = make_progress_bar(clicks, target)
+        next_admin_block = (
+            f"\n\n👑 <b>Прогресс {label_next}:</b>\n"
+            f"[{bar}] {percent}%\n"
+            f"⬇️ <i>Осталось:</i> <code>{remaining:.2f}</code> кликов"
+        )
+    else:
+        next_admin_block = "\n\n👑 <b>Админка:</b> максимальный уровень у тя щя."
+
+    caption = (
+        "<blockquote><b>👤 Твой профиль с информацией TunuziaClicker</b></blockquote>\n\n"
+        f"<blockquote>🆔 <b>Ur ID:</b> <code>{user.id}</code>\n"
+        f"📛 <b>Юзернейм:</b> <code>{user_data['username']}</code></blockquote>\n\n"
+        f"<blockquote>💰 <b>Кликов:</b> <code>{clicks:.2f}</code>\n"
+        f"⚙️ <b>Уровень бустера:</b> x{float(user_data['multiplier']):.2f}\n"
+        f"👑 <b>Админка:</b> {admin_text}\n"
+        f"📜 <b>ToS принят:</b> {'✅ Да' if user_data['accepted_tos'] else '❌ Нет'}</blockquote>"
+        f"{next_admin_block}"
+    )
+
+    chat_id = update.effective_chat.id
+
+    # Отправляем как "карточку-профиль" с картинкой, если есть
+    if os.path.exists(WELCOME_IMAGE_PATH):
+        with open(WELCOME_IMAGE_PATH, "rb") as img:
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=InputFile(img),
+                caption=caption,
+                parse_mode="HTML"
+            )
+    else:
+        await update.message.reply_text(
+            caption,
+            parse_mode="HTML"
+        )
+
+# ================== /users_admins ==================
+
+async def users_admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        return
+
+    users_dict = data.get("users", {})
+    admins = [
+        (uid, uinfo)
+        for uid, uinfo in users_dict.items()
+        if uinfo.get("admin_level", 0) > 0
+    ]
+
+    if not admins:
+        await update.message.reply_text(
+            "👑 Админов, купленных через бота, пока нет.",
+            parse_mode="HTML"
+        )
+        return
+
+    # сортируем: сначала по уровню админки (2 -> 1), потом по кликам
+    admins.sort(
+        key=lambda item: (
+            -item[1].get("admin_level", 0),
+            -float(item[1].get("clicks", 0.0))
+        )
+    )
+
+    lines = []
+    now = time.time()
+    for i, (uid, uinfo) in enumerate(admins, start=1):
+        level = uinfo.get("admin_level", 0)
+        level_text = "1 ур." if level == 1 else "2 ур."
+        expires_at = float(uinfo.get("admin_expires_at", 0.0))
+        if expires_at > 0:
+            remain = max(0, int(expires_at - now))
+            hours = remain // 3600
+            # красивое время конца
+            expires_dt = datetime.fromtimestamp(expires_at).strftime("%Y-%m-%d %H:%M:%S")
+            lines.append(
+                f"{i}. <b>{uinfo.get('username', 'Без ника')}</b> "
+                f"(ID: <code>{uid}</code>) — 👑 {level_text}, "
+                f"осталось ~ <code>{hours}</code> ч (до {expires_dt})"
+            )
+        else:
+            lines.append(
+                f"{i}. <b>{uinfo.get('username', 'Без ника')}</b> "
+                f"(ID: <code>{uid}</code>) — 👑 {level_text}, "
+                f"⏳ срок неизвестен"
+            )
+
+    text = (
+        "<blockquote><b>👑 Админы TunuziaClicker (по данным бота лог из data.json)</b></blockquote>\n\n"
+        + "\n".join(lines)
+    )
+
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "<b><blockquote>❓ Помощь по TunuziaClicker</blockquote>\n\n"
+        "👋 Небольшая помощь по боту:\n\n"
+        "<blockquote>🟢 <b>Основное</b>\n"
+        "• <code>/start</code> — запуск бота, ToS, чек подписки.\n"
+        "• <code>/me</code> — твой профиль: клики, бустеры, админка.</blockquote>\n\n"
+        "<blockquote>🟡 <b>Кнопки под сообщением</b>\n"
+        "• <b>👆 Кликнуть</b> — фарм кликов (кд 15 сек).\n"
+        "• <b>📊 Топ игроков</b> — рейтинг по кликам (топ 10 крч).\n"
+        "• <b>🤑 Магазин</b> — покупка бустеров и админки.</blockquote>\n\n"
+        "<blockquote>💸 <b>Магазин</b>\n"
+        "• Бустеры увеличивают количество кликов за один тап.\n"
+        "• Админка 1 ур. — право писать в канал на 7 дней.\n"
+        "• Админка 2 ур. — писать + менять профиль канала 7 дней.</blockquote>\n\n"
+        "по доп вопросам @codespaster 💬</b>"
+    )
+
+    await update.message.reply_text(text, parse_mode="HTML")
 
 # ================== ОБРАБОТЧИК КНОПОК ==================
 
@@ -401,6 +699,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data["accepted_tos"] = True
             save_data()
             await query.answer("✅ Правила приняты!", show_alert=True)
+
+            # ЛОГ В ЛС АДМИНУ
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(
+                        "📜 <b>Пользователь принял ToS</b>\n\n"
+                        f"🆔 ID: <code>{user.id}</code>\n"
+                        f"📛 Username: <code>{user.username or 'Без ника'}</code>"
+                    ),
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                print(f"Error logging ToS accept to admin: {e}")
+
             # Меняем текст сообщения с ToS
             await query.edit_message_text(
                 "✅ Ты принял условия использования TunuziaClicker.\nОткрываю меню...",
@@ -500,7 +813,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "admin_max":
         await query.answer(
-            "✅ У тебя уже максимальная админка (2 ур.).",
+            "✅ У тебя уже максимальная админка (2 ур.) нах те ещо.",
             show_alert=True
         )
 
@@ -534,19 +847,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 can_manage_video_chats=False,
                 is_anonymous=False,
             )
+
             user_data["admin_level"] = 1
+            user_data["admin_expires_at"] = time.time() + WEEK_SECONDS
             data_changed = True
 
+            # Планируем снятие админки через 7 дней
+            schedule_admin_expiry_job_for_user(context.application, user.id, user_data["admin_expires_at"])
+
             await query.answer(
-                "✅ Ты купил админку 1 ур. — теперь можешь писать в канал.",
+                "✅ Ты купил админку 1 ур. (7 дней) — теперь можешь писать в канал.",
                 show_alert=True
             )
+
+            # ЛОГ В ЛС АДМИНУ — В ЧЕЛОВЕЧЕСКОМ ФОРМАТЕ
+            try:
+                expires_dt = datetime.fromtimestamp(user_data["admin_expires_at"]).strftime("%Y-%m-%d %H:%M:%S")
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(
+                        "👑 <b>Покупка админки 1 ур.</b>\n\n"
+                        f"🆔 ID: <code>{user.id}</code>\n"
+                        f"📛 Username: <code>{user.username or 'Без ника'}</code>\n"
+                        f"💰 Клики после покупки: <code>{user_data['clicks']:.2f}</code>\n"
+                        f"⏳ Действует до: <code>{expires_dt}</code>"
+                    ),
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                print(f"Error logging admin L1 purchase: {e}")
 
             await query.edit_message_caption(
                 caption=(
                     "👑 <b>Админка 1 ур. куплена!</b>\n\n"
-                    "Теперь ты админ с правом писать в канал.\n\n"
-                    f"💰 Осталось бабла: <code>{user_data['clicks']:.2f}</code>"
+                    "Теперь ты админ с правом писать в канал на 7 дней <3.\n\n"
+                    f"💰 Оставшиеся клики: <code>{user_data['clicks']:.2f}</code>"
                 ),
                 reply_markup=main_keyboard(),
                 parse_mode="HTML"
@@ -556,7 +891,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data["clicks"] += ADMIN_L1_PRICE
             data_changed = True
             await query.answer(
-                "⚠️ Не удалось выдать админку. Свяжись с @codespaster.",
+                "⚠️ Конфликт администраторов is_already_admin. Свяжитесь с @codespaster.",
                 show_alert=True
             )
 
@@ -569,12 +904,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if user_data.get("admin_level", 0) >= 2:
-            await query.answer("✅ у тя уже максимальная админка", show_alert=True)
+            await query.answer("✅ У тебя уже админка 2 ур. куда там", show_alert=True)
             return
 
         if user_data["clicks"] < ADMIN_L2_PRICE:
             await query.answer(
-                f"❌ Недостаточно кликов.\n"
+                f"❌ Недостаточно кликов. Копи олух.\n"
                 f"Нужно: {ADMIN_L2_PRICE}, а у тебя: {user_data['clicks']:.2f}.",
                 show_alert=True
             )
@@ -597,19 +932,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 can_manage_video_chats=False,
                 is_anonymous=False,
             )
+
             user_data["admin_level"] = 2
+            user_data["admin_expires_at"] = time.time() + WEEK_SECONDS
             data_changed = True
 
+            # Перепланируем снятие админки (теперь 2 ур., снова 7 дней)
+            schedule_admin_expiry_job_for_user(context.application, user.id, user_data["admin_expires_at"])
+
             await query.answer(
-                "✅ Ты купил админку 2 ур. — можешь менять профиль канала теперь :D.",
+                "✅ Ты купил админку 2 ур. (7 дней) — можешь менять профиль канала еще.",
                 show_alert=True
             )
+
+            # ЛОГ В ЛС АДМИНУ — В ЧЕЛОВЕЧЕСКОМ ФОРМАТЕ
+            try:
+                expires_dt = datetime.fromtimestamp(user_data["admin_expires_at"]).strftime("%Y-%m-%d %H:%M:%S")
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(
+                        "👑 <b>Покупка админки 2 ур.</b>\n\n"
+                        f"🆔 ID: <code>{user.id}</code>\n"
+                        f"📛 Username: <code>{user.username or 'Без ника'}</code>\n"
+                        f"💰 Клики после покупки: <code>{user_data['clicks']:.2f}</code>\n"
+                        f"⏳ Действует до: <code>{expires_dt}</code>"
+                    ),
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                print(f"Error logging admin L2 purchase: {e}")
 
             await query.edit_message_caption(
                 caption=(
                     "👑 <b>Админка 2 ур. куплена!</b>\n\n"
-                    "Теперь ты можешь менять профиль канала (название, аву, описание).\n\n"
-                    f"💰 Осталось бабоса: <code>{user_data['clicks']:.2f}</code>"
+                    "Теперь ты можешь менять профиль канала (название, аву, описание) в течение 7 дней.\n\n"
+                    f"💰 Оставшиеся клики: <code>{user_data['clicks']:.2f}</code>"
                 ),
                 reply_markup=main_keyboard(),
                 parse_mode="HTML"
@@ -619,7 +976,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data["clicks"] += ADMIN_L2_PRICE
             data_changed = True
             await query.answer(
-                "⚠️ Произошел конфликт Telegram, свяжитесь с @codespaster.",
+                "⚠️ Конфликт администраторов is_already_admin. Свяжитесь с @codespaster.",
                 show_alert=True
             )
 
@@ -640,7 +997,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if user_data["clicks"] < price:
             await query.answer(
-                f"❌ Недостаточно кликов.\n"
+                f"❌ Недостаточно кликов. КОпи олух.\n"
                 f"Нужно: {price}, а у тебя: {user_data['clicks']:.2f}.",
                 show_alert=True
             )
@@ -676,10 +1033,16 @@ def main():
 
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Планируем снятие админок для уже существующих пользователей
+    schedule_admin_expiry_jobs_for_all_users(app)
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_help))
     app.add_handler(CommandHandler("addclicks", add_clicks_cmd))
     app.add_handler(CommandHandler("broadcast", broadcast_cmd))
+    app.add_handler(CommandHandler("me", me_cmd))
+    app.add_handler(CommandHandler("users_admins", users_admins_cmd))
+    app.add_handler(CommandHandler("help", help_cmd))
 
     # Один обработчик для всех callback-кнопок
     app.add_handler(CallbackQueryHandler(button_handler))
