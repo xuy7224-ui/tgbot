@@ -19,7 +19,7 @@ from telegram.ext import (
 
 # ================== НАСТРОЙКИ ==================
 
-TOKEN = "8449787376:AAHiF6t-pG5uSjiW7EayJBbH5ZliS1lSSNU"  # ⚠️ СЮДА ВСТАВЬ СВОЙ ТОКЕН
+TOKEN = "8449787376:AAHiF6t-pG5uSjiW7EayJBbH5ZliS1lSSNU"  # ⚠️ лучше потом смени токен
 ADMIN_ID = 7877092881          # ID админа
 DATA_FILE = "data.json"        # файл для хранения данных
 WELCOME_IMAGE_PATH = "welcome.jpg"  # имя файла с картинкой
@@ -29,7 +29,7 @@ CLICK_COOLDOWN = 15  # секунд между кликами
 # Канал
 CHANNEL_LINK = "https://t.me/+g1mm-WpU9owwMWJk"
 
-# ⚠️ СЮДА ВПИШИ ИД КАНАЛА (например -1001234567890)
+# ID канала (и для подписки, и для выдачи админки)
 CHANNEL_ID = -1003009758716
 
 # Цены бустеров (в кликах)
@@ -38,6 +38,10 @@ BOOSTER_PRICES = {
     "1.5": 50,    # 1.5x за 50 кликов
     "2": 100,     # 2x за 100 кликов
 }
+
+# Цены админок
+ADMIN_L1_PRICE = 250  # админка 1 ур. — писать в канал
+ADMIN_L2_PRICE = 250  # админка 2 ур. — ещё и менять профиль канала
 
 # Структура данных:
 data: Dict[str, Any] = {"users": {}}
@@ -71,12 +75,21 @@ def get_user_dict(user_id: int, username: str | None) -> Dict[str, Any]:
             "clicks": 0.0,
             "multiplier": 1.0,
             "last_click": 0.0,
+            "admin_level": 0,     # 0 — нет админки, 1 — ур.1, 2 — ур.2
+            "accepted_tos": False # принял ли ToS
         }
         save_data()
     else:
         # Обновим ник, если изменился
         if username and users[uid].get("username") != username:
             users[uid]["username"] = username
+            save_data()
+        # Дозакинем новые поля, если старый юзер
+        if "admin_level" not in users[uid]:
+            users[uid]["admin_level"] = 0
+            save_data()
+        if "accepted_tos" not in users[uid]:
+            users[uid]["accepted_tos"] = False
             save_data()
     return users[uid]
 
@@ -101,17 +114,42 @@ def main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👆 Кликнуть", callback_data="click")],
         [InlineKeyboardButton("📊 Топ игроков", callback_data="stats")],
-        [InlineKeyboardButton("🤑 Магазин бустеров", callback_data="shop")],
+        [InlineKeyboardButton("🤑 Магазин", callback_data="shop")],
     ])
 
 
-def shop_keyboard() -> InlineKeyboardMarkup:
+def shop_keyboard(user_data: Dict[str, Any]) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(f"⚡ Бустер 1.25x — {BOOSTER_PRICES['1.25']} кликов", callback_data="buy_1.25")],
         [InlineKeyboardButton(f"🚀 Бустер 1.5x — {BOOSTER_PRICES['1.5']} кликов", callback_data="buy_1.5")],
         [InlineKeyboardButton(f"🔥 Бустер 2x — {BOOSTER_PRICES['2']} кликов", callback_data="buy_2")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_main")],
     ]
+
+    admin_level = user_data.get("admin_level", 0)
+
+    if admin_level < 1:
+        buttons.append([
+            InlineKeyboardButton(
+                f"👑 Админка 1 ур. — {ADMIN_L1_PRICE} кликов",
+                callback_data="buy_admin_1"
+            )
+        ])
+    elif admin_level == 1:
+        buttons.append([
+            InlineKeyboardButton(
+                f"👑 Админка 2 ур. — {ADMIN_L2_PRICE} кликов",
+                callback_data="buy_admin_2"
+            )
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton(
+                "✅ Админка 2 ур. уже есть",
+                callback_data="admin_max"
+            )
+        ])
+
+    buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="back_main")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -122,12 +160,19 @@ def subscribe_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")],
     ])
 
+
+def tos_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для ToS."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Принять правила", callback_data="accept_tos")],
+    ])
+
 # ================== ОБЩЕЕ ПРИВЕТСТВИЕ ДЛЯ ПОДПИСАННЫХ ==================
 
 async def send_welcome_tunuzia(update_or_query, context: ContextTypes.DEFAULT_TYPE):
     """
     Красивое приветствие TunuziaClicker для подписанных.
-    Можно вызывать как из /start, так и после успешной проверки подписки.
+    Можно вызывать как из /start, так и после успешной проверки подписки / ToS.
     """
     chat_id = (
         update_or_query.effective_chat.id
@@ -159,6 +204,27 @@ async def send_welcome_tunuzia(update_or_query, context: ContextTypes.DEFAULT_TY
             parse_mode="HTML"
         )
 
+# ================== ToS ==================
+
+async def send_tos_message(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "<blockquote><b>📜 Условия использования TunuziaClicker</b></blockquote>\n\n"
+        "<blockquote>"
+        "• Бот создан для развлечения, всё внутри нереально.\n"
+        "• Владелец имеет право забрать у вас админку без объяснений причин.\n"
+        "• Вас могут заблокировать в боте без объяснения причин.\n"
+        "• Разработчик не несет ответсвтвенность за ваши действия.\n"
+        "</blockquote>\n\n"
+        "<b>Нажимая кнопку «✅ Принять правила», ты подтверждаешь согласие с вышеуказанным.</b>"
+    )
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        reply_markup=tos_keyboard(),
+        parse_mode="HTML"
+    )
+
 # ================== ОБРАБОТЧИКИ КОМАНД ==================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -169,7 +235,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=(
-                "🚫<blockquote> <b>Доступ к TunuziaClicker закрыт</b></blockquote>\n\n"
+                " <blockquote><b>Доступ к TunuziaClicker закрыт</b></blockquote>\n\n"
                 "Чтобы пользоваться ботом, подпишись на наш канал:\n"
                 f"<a href=\"{CHANNEL_LINK}\">📢 Наш канал</a>\n\n"
                 "После подписки нажми кнопку <b>«✅ Проверить подписку»</b> ниже 👇"
@@ -179,8 +245,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Если уже подписан – запускаем основную логику
-    get_user_dict(user.id, user.username)
+    # Уже подписан
+    user_data = get_user_dict(user.id, user.username)
+
+    # Если ещё не принял ToS — показываем ToS
+    if not user_data.get("accepted_tos", False):
+        await send_tos_message(update.effective_chat.id, context)
+        return
+
+    # Если ToS принят — обычный старт
     await send_welcome_tunuzia(update, context)
 
 
@@ -283,8 +356,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- Отдельно обрабатываем кнопку проверки подписки ---
     if query.data == "check_sub":
         if await is_subscribed(user.id, context):
-            get_user_dict(user.id, user.username)
-            await send_welcome_tunuzia(query, context)
+            user_data = get_user_dict(user.id, user.username)
+
+            # Если ToS ещё не принят — показываем ToS
+            if not user_data.get("accepted_tos", False):
+                await send_tos_message(query.message.chat.id, context)
+            else:
+                await send_welcome_tunuzia(query, context)
+
             await query.answer("✅ Подписка подтверждена!", show_alert=False)
         else:
             await query.answer(
@@ -293,7 +372,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # Для всех остальных кнопок — доступ только при подписке
+    # Проверка подписки для всех остальных кнопок
     if not await is_subscribed(user.id, context):
         await query.answer(
             "🚫 Сначала подпишитесь на наш канал, затем нажмите «Проверить подписку».",
@@ -312,8 +391,35 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # --- Дальше идёт логика для подписанных пользователей ---
     user_data = get_user_dict(user.id, user.username)
+
+    # --- Обработка принятия ToS ---
+    if query.data == "accept_tos":
+        if user_data.get("accepted_tos", False):
+            await query.answer("Ты уже принял правила ✅", show_alert=False)
+        else:
+            user_data["accepted_tos"] = True
+            save_data()
+            await query.answer("✅ Правила приняты!", show_alert=True)
+            # Меняем текст сообщения с ToS
+            await query.edit_message_text(
+                "✅ Ты принял условия использования TunuziaClicker.\nОткрываю меню...",
+                parse_mode="HTML"
+            )
+            # Отправляем приветствие
+            await send_welcome_tunuzia(query, context)
+        return
+
+    # Если ToS ещё не принят — блокируем остальные кнопки
+    if not user_data.get("accepted_tos", False):
+        await query.answer(
+            "📜 Сначала нужно принять правила использования (ToS).",
+            show_alert=True
+        )
+        await send_tos_message(query.message.chat.id, context)
+        return
+
+    # --- Дальше идёт логика для подписанных и принявших ToS пользователей ---
     data_changed = False
 
     if query.data == "click":
@@ -373,24 +479,149 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "shop":
         await query.edit_message_caption(
             caption=(
-                "<b><blockquote>🛒 Магазин бустеров</blockquote>\n\n"
+                "<b><blockquote>🛒 Магазин</blockquote>\n\n"
                 f"<blockquote>💰 Твои клики: <code>{user_data['clicks']:.2f}</code>\n"
                 f"⚙️ Текущий бустер: x{user_data['multiplier']:.2f}</blockquote>\n\n"
-                "Выбери бустер ниже, чтобы фармить ещё быстрее:</b>"
+                "Выбери, что хочешь приобрести:</b>"
             ),
-            reply_markup=shop_keyboard(),
+            reply_markup=shop_keyboard(user_data),
             parse_mode="HTML"
         )
 
     elif query.data == "back_main":
         await query.edit_message_caption(
             caption="<b><blockquote>👋 Мейн меню TunuziaClicker!</blockquote>\n\n"
-       f"<blockquote>🤗 Привет, <code>{user_data['username']}</code>\n"
-       "📢 Наш канал: <a href=\"https://t.me/+g1mm-WpU9owwMWJk\">tunuZia</a></blockquote>\n\n"
-        "👇 <b>Используй кнопки ниже для продолжения:</b></b>",
+                    f"<blockquote>🤗 Привет, <code>{user_data['username']}</code>\n"
+                    "📢 Наш канал: <a href=\"https://t.me/+g1mm-WpU9owwMWJk\">tunuZia</a></blockquote>\n\n"
+                    "👇 <b>Используй кнопки ниже для продолжения:</b></b>",
             reply_markup=main_keyboard(),
             parse_mode="HTML",
         )
+
+    elif query.data == "admin_max":
+        await query.answer(
+            "✅ У тебя уже максимальная админка (2 ур.).",
+            show_alert=True
+        )
+
+    elif query.data == "buy_admin_1":
+        if user_data.get("admin_level", 0) >= 1:
+            await query.answer("🤔 У тебя уже есть админка 1 ур. или выше.", show_alert=True)
+            return
+
+        if user_data["clicks"] < ADMIN_L1_PRICE:
+            await query.answer(
+                f"❌ Недостаточно кликов.\n"
+                f"Нужно: {ADMIN_L1_PRICE}, а у тебя: {user_data['clicks']:.2f}.",
+                show_alert=True
+            )
+            return
+
+        user_data["clicks"] -= ADMIN_L1_PRICE
+        data_changed = True
+
+        try:
+            await context.bot.promote_chat_member(
+                chat_id=CHANNEL_ID,
+                user_id=user.id,
+                can_manage_chat=False,
+                can_post_messages=True,       # право писать
+                can_edit_messages=False,
+                can_delete_messages=False,
+                can_invite_users=False,
+                can_change_info=False,
+                can_promote_members=False,
+                can_manage_video_chats=False,
+                is_anonymous=False,
+            )
+            user_data["admin_level"] = 1
+            data_changed = True
+
+            await query.answer(
+                "✅ Ты купил админку 1 ур. — теперь можешь писать в канал.",
+                show_alert=True
+            )
+
+            await query.edit_message_caption(
+                caption=(
+                    "👑 <b>Админка 1 ур. куплена!</b>\n\n"
+                    "Теперь ты админ с правом писать в канал.\n\n"
+                    f"💰 Осталось бабла: <code>{user_data['clicks']:.2f}</code>"
+                ),
+                reply_markup=main_keyboard(),
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            print(f"Error while promoting user {user.id} to admin L1: {e}")
+            user_data["clicks"] += ADMIN_L1_PRICE
+            data_changed = True
+            await query.answer(
+                "⚠️ Не удалось выдать админку. Свяжись с @codespaster.",
+                show_alert=True
+            )
+
+    elif query.data == "buy_admin_2":
+        if user_data.get("admin_level", 0) < 1:
+            await query.answer(
+                "⚠️ Сначала купи админку 1 ур., потом 2 ур.",
+                show_alert=True
+            )
+            return
+
+        if user_data.get("admin_level", 0) >= 2:
+            await query.answer("✅ у тя уже максимальная админка", show_alert=True)
+            return
+
+        if user_data["clicks"] < ADMIN_L2_PRICE:
+            await query.answer(
+                f"❌ Недостаточно кликов.\n"
+                f"Нужно: {ADMIN_L2_PRICE}, а у тебя: {user_data['clicks']:.2f}.",
+                show_alert=True
+            )
+            return
+
+        user_data["clicks"] -= ADMIN_L2_PRICE
+        data_changed = True
+
+        try:
+            await context.bot.promote_chat_member(
+                chat_id=CHANNEL_ID,
+                user_id=user.id,
+                can_manage_chat=False,
+                can_post_messages=True,
+                can_edit_messages=False,
+                can_delete_messages=False,
+                can_invite_users=False,
+                can_change_info=True,         # можно менять профиль канала
+                can_promote_members=False,
+                can_manage_video_chats=False,
+                is_anonymous=False,
+            )
+            user_data["admin_level"] = 2
+            data_changed = True
+
+            await query.answer(
+                "✅ Ты купил админку 2 ур. — можешь менять профиль канала теперь :D.",
+                show_alert=True
+            )
+
+            await query.edit_message_caption(
+                caption=(
+                    "👑 <b>Админка 2 ур. куплена!</b>\n\n"
+                    "Теперь ты можешь менять профиль канала (название, аву, описание).\n\n"
+                    f"💰 Осталось бабоса: <code>{user_data['clicks']:.2f}</code>"
+                ),
+                reply_markup=main_keyboard(),
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            print(f"Error while promoting user {user.id} to admin L2: {e}")
+            user_data["clicks"] += ADMIN_L2_PRICE
+            data_changed = True
+            await query.answer(
+                "⚠️ Произошел конфликт Telegram, свяжитесь с @codespaster.",
+                show_alert=True
+            )
 
     elif query.data.startswith("buy_"):
         booster_str = query.data.split("_", 1)[1]
