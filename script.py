@@ -27,7 +27,7 @@ WELCOME_IMAGE_PATH = "welcome.jpg"  # имя файла с картинкой
 CLICK_COOLDOWN = 15  # секунд между кликами
 
 # Канал
-CHANNEL_LINK = "https://t.me/+g1mm-WpU9owwMWJk"
+CHANNEL_LINK = "https://t.me/+JGoGiSoFFbhkMWE0"
 
 # ID канала (и для подписки, и для выдачи админки)
 CHANNEL_ID = -1003009758716
