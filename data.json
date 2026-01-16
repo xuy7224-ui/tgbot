@@ -2,33 +2,41 @@
   "users": {
     "5255999566": {
       "username": "n0mercyYan",
-      "clicks": 4.0,
-      "multiplier": 1.0,
+      "clicks": 28.5,
+      "multiplier": 1.5,
       "last_click": 1768415013.196718
     },
     "6076188942": {
       "username": "Mrpipiskin2001",
-      "clicks": 0.0,
+      "clicks": 67.0,
       "multiplier": 1.0,
       "last_click": 0.0
     },
     "7877092881": {
       "username": "codespaster",
-      "clicks": 688.0,
+      "clicks": 318.0,
       "multiplier": 2.0,
-      "last_click": 1768416967.6165504
-    },
-    "5645932230": {
-      "username": "Без ника",
-      "clicks": 6.0,
-      "multiplier": 1.0,
-      "last_click": 1768417418.2068083
+      "last_click": 1768580895.0398347,
+      "admin_level": 2,
+      "accepted_tos": true,
+      "admin_expires_at": 0.0
     },
     "8512277567": {
       "username": "minecraftgivesword",
-      "clicks": 25.5,
+      "clicks": 12.25,
       "multiplier": 1.25,
-      "last_click": 1768487216.0857549
+      "last_click": 1768504033.9335527,
+      "admin_level": 1,
+      "accepted_tos": true
+    },
+    "5645932230": {
+      "username": "Без ника",
+      "clicks": 5.0,
+      "multiplier": 1.0,
+      "last_click": 1768580973.0029066,
+      "admin_level": 0,
+      "admin_expires_at": 0.0,
+      "accepted_tos": true
     }
   }
 }
