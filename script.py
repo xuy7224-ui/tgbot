@@ -21,7 +21,7 @@ from telegram.error import TelegramError
 
 # ================== НАСТРОЙКИ ==================
 
-BOT_TOKEN = "8368695770:AAGrToIf4nlWfH7U_lP3-yOcl7wmTWdwZaI"
+BOT_TOKEN = "ff"
 
 # Числовой ID канала (ОБЯЗАТЕЛЬНО заменить!)
 CHANNEL_ID = -1003009758716
